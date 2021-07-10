@@ -2,7 +2,7 @@
 
 version       = "0.1.0"
 author        = "d.terlyakhin"
-description   = "A new awesome nimble package"
+description   = "nesper captive portal"
 license       = "MIT"
 
 
