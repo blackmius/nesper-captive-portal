@@ -1,24 +1,39 @@
 import nesper, nesper/[net_utils, nvs_utils, events, wifi, tasks]
-import net
+import net, marshal
 
 const
   TAG: cstring = "networking"
   GOT_IPV4_BIT* = EventBits_t(BIT(1))
   CONNECTED_BITS* = (GOT_IPV4_BIT)
 
-var networkConnectEventGroup*: EventGroupHandle_t
-var networkIpAddr*: IpAddress
-var networkConnectionName*: cstring
+var
+  networkConnectEventGroup*: EventGroupHandle_t
+  networkIpAddr*: IpAddress
+  networkConnectionName*: cstring
 
+var
+  apCount*: uint16 
+  apRecords* {.threadvar.}: seq[wifi_ap_record_t]
 
-proc ipReceivedHandler*(arg: pointer; event_base: esp_event_base_t; event_id: int32;
+proc ipReceivedHandler(arg: pointer; event_base: esp_event_base_t; event_id: int32;
               event_data: pointer) {.cdecl.} =
   var event: ptr ip_event_got_ip_t = cast[ptr ip_event_got_ip_t](event_data)
   logi TAG, "event.ip_info.ip: %s", $(event.ip_info.ip)
 
   networkIpAddr = toIpAddress(event.ip_info.ip)
-  # memcpy(addr(sIpAddr), addr(event.ip_info.ip), sizeof((sIpAddr)))
   logw TAG, "got event ip: %s", $networkIpAddr
+
+proc scanDoneHandler(arg: pointer; event_base: esp_event_base_t; event_id: int32;
+              event_data: pointer) {.cdecl.} =
+  var event: ptr wifi_event_sta_scan_done_t = cast[ptr wifi_event_sta_scan_done_t](event_data)
+  logi TAG, "Number of access points found: %d", event.number
+
+  check: esp_wifi_scan_get_ap_num(apCount.addr)
+
+  if apCount != 0:
+    apRecords = newSeq[wifi_ap_record_t](apCount)
+    check: esp_wifi_scan_get_ap_records(apCount.addr, apRecords[0].addr)
+    logi TAG, "%s", $$apRecords
 
 proc onWifiDisconnect*(
     arg: pointer;
@@ -29,15 +44,18 @@ proc onWifiDisconnect*(
   check: esp_wifi_connect()
 
 proc wifiStart() =
+  logi TAG, "wifi start"
   let wcfg: wifi_init_config_t = wifi_init_config_default()
   discard esp_wifi_init(unsafeAddr(wcfg))
 
   WIFI_EVENT_STA_DISCONNECTED.eventRegister(onWifiDisconnect, nil)
   IP_EVENT_STA_GOT_IP.eventRegister(ipReceivedHandler, nil)
+  WIFI_EVENT_SCAN_DONE.eventRegister(scanDoneHandler, nil)
 
   check: esp_wifi_set_storage(WIFI_STORAGE_RAM)
 
 proc wifiApStart*() =
+  logi TAG, "wifi ap start"
   wifiStart()
 
   check: esp_wifi_set_mode(WIFI_MODE_APSTA)
@@ -49,7 +67,12 @@ proc wifiApStart*() =
   check: esp_wifi_set_config(WIFI_IF_AP, addr(wifi_config))
   check: esp_wifi_start()
 
+  var scan_config: wifi_scan_config_t
+  check: esp_wifi_scan_start(scan_config.addr, false)
+
 proc wifiConnect(): esp_err_t =
+  logi TAG, "wifi connect"
+
   if networkConnectEventGroup != nil:
     return ESP_ERR_INVALID_STATE
 
@@ -84,11 +107,14 @@ proc wifiStaStart*(ssid: string, passport: string) =
   networkConnectionName = ssid 
 
 proc wifiStop*() =
+  logi TAG, "wifi stop"
   ##  tear down connection, release resources
   WIFI_EVENT_STA_DISCONNECTED.eventUnregister(onWifiDisconnect)
   IP_EVENT_STA_GOT_IP.eventUnregister(ipReceivedHandler)
+  WIFI_EVENT_SCAN_DONE.eventUnregister(scanDoneHandler)
 
-  check: esp_wifiStop()
+  check: esp_wifi_scan_stop()
+  check: esp_wifi_stop()
   check: esp_wifi_deinit()
 
 

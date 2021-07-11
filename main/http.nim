@@ -1,6 +1,10 @@
-import nesper, asynchttpserver, net, asyncdispatch, uri
+import nesper
+import asynchttpserver, net, asyncdispatch, uri, marshal
 
-const TAG: cstring = "http"
+import networking
+
+const TAG = "http"
+const FILE = """<title>ne1 module</title><body></body>"""
 
 proc run_http_server*() {.async.} =
   logi TAG, "Starting http server on port 80"
@@ -9,7 +13,12 @@ proc run_http_server*() {.async.} =
 
   proc cb(req: Request) {.async.} =
     logi TAG, "%s %s", $req.reqMethod, $req.url
-    await req.respond(Http200, "HELLO FROM ESP32")
+    if req.url.path == "/sta_list":
+      let headers = newHttpHeaders([("Content-Type","application/json")])
+      await req.respond(Http200, $$apRecords, headers)
+    else:
+      let headers = newHttpHeaders([("Content-Type","text/html; charset=utf-8")])
+      await req.respond(Http200, FILE, headers)
   
   server.listen Port(80)
   while true:
